@@ -1,0 +1,286 @@
+import sqlite3
+import requests
+import tkinter as tk
+from tkinter import messagebox, ttk
+from PIL import Image, ImageTk
+import io
+
+# Função para conectar ao banco de dados
+def connect_db():
+    conn = sqlite3.connect('biblioteca.db')
+    cursor = conn.cursor()
+    return conn, cursor
+
+# Função para obter autores
+def get_autores():
+    conn, cursor = connect_db()
+    cursor.execute('SELECT AutorID, Nome FROM Autores')
+    autores = cursor.fetchall()
+    conn.close()
+    return autores
+
+# Função para buscar a capa do livro na API do Google Books
+def buscar_capa(titulo):
+    try:
+        url = f"https://www.googleapis.com/books/v1/volumes?q={titulo}"
+        response = requests.get(url)
+        data = response.json()
+
+        if 'items' in data and len(data['items']) > 0:
+            return data['items'][0]['volumeInfo'].get('imageLinks', {}).get('thumbnail')
+        else:
+            messagebox.showinfo("Aviso", "Capa não encontrada.")
+            return None
+    except Exception as e:
+        messagebox.showerror("Erro", f"Não foi possível buscar a capa: {e}")
+        return None
+
+# Função para adicionar autor
+def add_autor():
+    nome = entrada_nome_autor.get()
+    nacionalidade = entrada_nacionalidade_autor.get()
+    conn, cursor = connect_db()
+    cursor.execute('INSERT INTO Autores (Nome, Nacionalidade) VALUES (?, ?)', (nome, nacionalidade))
+    conn.commit()
+    conn.close()
+    messagebox.showinfo('Sucesso', 'Autor adicionado com sucesso!')
+    entrada_nome_autor.delete(0, tk.END)
+    entrada_nacionalidade_autor.delete(0, tk.END)
+
+# Função para adicionar livro
+def add_livro():
+    titulo = entrada_titulo_livro.get().strip()
+    autor_info = combobox_autor.get()
+    autor_id = autor_info.split(" (ID: ")[-1][:-1]
+    ano = entrada_ano_livro.get().strip()
+    genero = entrada_genero_livro.get().strip()
+
+    capa_url = buscar_capa(titulo)
+
+    conn, cursor = connect_db()
+    cursor.execute('INSERT INTO Livros (Titulo, AutorID, AnoPublicacao, Genero, Capa) VALUES (?, ?, ?, ?, ?)',
+                   (titulo, autor_id, ano, genero, capa_url))
+    conn.commit()
+    conn.close()
+    messagebox.showinfo('Sucesso', 'Livro adicionado com sucesso!')
+    entrada_titulo_livro.delete(0, tk.END)
+    combobox_autor.set('')
+    entrada_ano_livro.delete(0, tk.END)
+    entrada_genero_livro.delete(0, tk.END)
+
+# Função para adicionar empréstimo
+def add_emprestimo():
+    livro_id = entry_livro_id.get()
+    data_emp = entry_data_emp.get()
+    data_dev = entry_data_dev.get()
+    usuario = entry_nome_usuario.get()
+    conn, cursor = connect_db()
+    cursor.execute('INSERT INTO Emprestimos (LivroID, DataEmprestimo, DataDevolucao, NomeUsuario) VALUES (?, ?, ?, ?)',
+                   (livro_id, data_emp, data_dev, usuario))
+    conn.commit()
+    conn.close()
+    messagebox.showinfo('Sucesso', 'Empréstimo adicionado com sucesso!')
+    entry_livro_id.delete(0, tk.END)
+    entry_data_emp.delete(0, tk.END)
+    entry_data_dev.delete(0, tk.END)
+    entry_nome_usuario.delete(0, tk.END)
+
+# Função para visualizar livros
+def view_livros():
+    conn, cursor = connect_db()
+    cursor.execute('SELECT * FROM Livros')
+    livros = cursor.fetchall()
+    conn.close()
+
+    livros_list.delete(0, tk.END)
+    for livro in livros:
+        livros_list.insert(tk.END, livro)
+
+# Função para buscar livros
+def buscar_livro():
+    titulo_busca = entrada_busca_livro.get().strip()
+    conn, cursor = connect_db()
+    cursor.execute('SELECT * FROM Livros WHERE Titulo LIKE ?', ('%' + titulo_busca + '%',))
+    livros = cursor.fetchall()
+    conn.close()
+
+    livros_list.delete(0, tk.END)
+    for livro in livros:
+        livros_list.insert(tk.END, livro)
+
+# Função para visualizar empréstimos
+def view_emprestimos():
+    conn, cursor = connect_db()
+    cursor.execute('SELECT * FROM Emprestimos')
+    emprestimos = cursor.fetchall()
+    conn.close()
+
+    emprestimos_list.delete(0, tk.END)
+    for emp in emprestimos:
+        emprestimos_list.insert(tk.END, emp)
+
+# Função para visualizar histórico de empréstimos
+def visualizar_historico():
+    conn, cursor = connect_db()
+    cursor.execute('SELECT * FROM Emprestimos')
+    historico = cursor.fetchall()
+    conn.close()
+
+    chatbox.delete(1.0, tk.END)
+    for emp in historico:
+        chatbox.insert(tk.END, f"ID Livro: {emp[1]}, Data Empréstimo: {emp[2]}, Data Devolução: {emp[3]}, Usuário: {emp[4]}\n")
+
+# Função para remover empréstimo
+def remove_emprestimo():
+    selected = emprestimos_list.curselection()
+    if selected:
+        emprestimo = emprestimos_list.get(selected)
+        conn, cursor = connect_db()
+        cursor.execute('DELETE FROM Emprestimos WHERE EmprestimoID = ?', (emprestimo[0],))
+        conn.commit()
+        conn.close()
+        messagebox.showinfo('Sucesso', 'Empréstimo removido com sucesso!')
+        view_emprestimos()
+    else:
+        messagebox.showwarning('Seleção Inválida', 'Por favor, selecione um empréstimo para remover.')
+
+# Função para visualizar a capa do livro selecionado
+def mostrar_capa(event):
+    selected_book = livros_list.curselection()
+    if selected_book:
+        livro = livros_list.get(selected_book)
+        titulo = livro[1]
+        capa_url = buscar_capa(titulo)
+
+        if capa_url:
+            try:
+                response = requests.get(capa_url)
+                image_data = io.BytesIO(response.content)
+                img = Image.open(image_data)
+                img = img.resize((150, 200))
+                img = ImageTk.PhotoImage(img)
+
+                # Mantenha uma referência persistente à imagem
+                label_capa.image = img
+                label_capa.config(image=img)
+
+            except Exception as e:
+                messagebox.showerror("Erro", f"Não foi possível carregar a imagem: {e}")
+
+# Configuração da interface gráfica
+root = tk.Tk()
+root.title('Sistema de Biblioteca')
+root.configure(bg='#f5f5f5')
+root.geometry('900x700')
+
+# Estilos personalizados
+style = ttk.Style()
+style.configure('TLabel', background='#f5f5f5', font=('Helvetica', 12))
+style.configure('TEntry', font=('Helvetica', 12), padding=5)
+style.configure('TButton', font=('Helvetica', 12), padding=10, background='#357a38', foreground='white')
+style.configure('TCombobox', font=('Helvetica', 12))
+style.map('TButton', background=[('active', '#2e6b31')])
+
+# Notebook (abas)
+notebook = ttk.Notebook(root)
+notebook.pack(pady=10, expand=True)
+
+# Frame para adicionar autores
+frame_autor = tk.Frame(notebook, bg='#e7e7e7')
+notebook.add(frame_autor, text='Adicionar Autor')
+
+tk.Label(frame_autor, text='Nome:').grid(row=0, column=0, padx=5, pady=5, sticky='w')
+entrada_nome_autor = ttk.Entry(frame_autor)
+entrada_nome_autor.grid(row=0, column=1, padx=5, pady=5)
+
+tk.Label(frame_autor, text='Nacionalidade:').grid(row=1, column=0, padx=5, pady=5, sticky='w')
+entrada_nacionalidade_autor = ttk.Entry(frame_autor)
+entrada_nacionalidade_autor.grid(row=1, column=1, padx=5, pady=5)
+
+ttk.Button(frame_autor, text='Adicionar Autor', command=add_autor).grid(row=2, columnspan=2, pady=10)
+
+# Frame para adicionar livros
+frame_livro = tk.Frame(notebook, bg='#e7e7e7')
+notebook.add(frame_livro, text='Adicionar Livro')
+
+tk.Label(frame_livro, text='Título:').grid(row=0, column=0, padx=5, pady=5, sticky='w')
+entrada_titulo_livro = ttk.Entry(frame_livro)
+entrada_titulo_livro.grid(row=0, column=1, padx=5, pady=5)
+
+tk.Label(frame_livro, text='Autor:').grid(row=1, column=0, padx=5, pady=5, sticky='w')
+autores = get_autores()
+combobox_autor = ttk.Combobox(frame_livro, values=[f"{autor[1]} (ID: {autor[0]})" for autor in autores])
+combobox_autor.grid(row=1, column=1, padx=5, pady=5)
+
+tk.Label(frame_livro, text='Ano de Publicação:').grid(row=2, column=0, padx=5, pady=5, sticky='w')
+entrada_ano_livro = ttk.Entry(frame_livro)
+entrada_ano_livro.grid(row=2, column=1, padx=5, pady=5)
+
+tk.Label(frame_livro, text='Gênero:').grid(row=3, column=0, padx=5, pady=5, sticky='w')
+entrada_genero_livro = ttk.Entry(frame_livro)
+entrada_genero_livro.grid(row=3, column=1, padx=5, pady=5)
+
+ttk.Button(frame_livro, text='Adicionar Livro', command=add_livro).grid(row=4, columnspan=2, pady=10)
+
+# Frame para visualizar livros
+frame_visualizar = tk.Frame(notebook, bg='#e7e7e7')
+notebook.add(frame_visualizar, text='Visualizar Livros')
+
+tk.Label(frame_visualizar, text='Buscar Livro:').grid(row=0, column=0, padx=5, pady=5, sticky='w')
+entrada_busca_livro = ttk.Entry(frame_visualizar)
+entrada_busca_livro.grid(row=0, column=1, padx=5, pady=5)
+
+ttk.Button(frame_visualizar, text='Buscar', command=buscar_livro).grid(row=0, column=2, padx=5, pady=5)
+
+livros_list = tk.Listbox(frame_visualizar, height=15, width=80)
+livros_list.grid(row=1, column=0, columnspan=3, padx=5, pady=5)
+livros_list.bind('<<ListboxSelect>>', mostrar_capa)
+
+# Label para exibir capa do livro
+label_capa = tk.Label(frame_visualizar)
+label_capa.grid(row=1, column=3, padx=10)
+
+ttk.Button(frame_visualizar, text='Atualizar Lista', command=view_livros).grid(row=2, columnspan=3, pady=10)
+
+# Frame para gerenciar empréstimos
+frame_emprestimo = tk.Frame(notebook, bg='#e7e7e7')
+notebook.add(frame_emprestimo, text='Gerenciar Empréstimos')
+
+tk.Label(frame_emprestimo, text='ID do Livro:').grid(row=0, column=0, padx=5, pady=5, sticky='w')
+entry_livro_id = ttk.Entry(frame_emprestimo)
+entry_livro_id.grid(row=0, column=1, padx=5, pady=5)
+
+tk.Label(frame_emprestimo, text='Data de Empréstimo:').grid(row=1, column=0, padx=5, pady=5, sticky='w')
+entry_data_emp = ttk.Entry(frame_emprestimo)
+entry_data_emp.grid(row=1, column=1, padx=5, pady=5)
+
+tk.Label(frame_emprestimo, text='Data de Devolução:').grid(row=2, column=0, padx=5, pady=5, sticky='w')
+entry_data_dev = ttk.Entry(frame_emprestimo)
+entry_data_dev.grid(row=2, column=1, padx=5, pady=5)
+
+tk.Label(frame_emprestimo, text='Nome do Usuário:').grid(row=3, column=0, padx=5, pady=5, sticky='w')
+entry_nome_usuario = ttk.Entry(frame_emprestimo)
+entry_nome_usuario.grid(row=3, column=1, padx=5, pady=5)
+
+ttk.Button(frame_emprestimo, text='Adicionar Empréstimo', command=add_emprestimo).grid(row=4, columnspan=2, pady=10)
+
+# Frame para visualizar empréstimos
+frame_ver_emprestimos = tk.Frame(notebook, bg='#e7e7e7')
+notebook.add(frame_ver_emprestimos, text='Ver Empréstimos')
+
+emprestimos_list = tk.Listbox(frame_ver_emprestimos, height=15, width=80)
+emprestimos_list.grid(row=0, column=0, columnspan=3, padx=5, pady=5)
+ttk.Button(frame_ver_emprestimos, text='Atualizar Lista de Empréstimos', command=view_emprestimos).grid(row=1, columnspan=3, pady=10)
+ttk.Button(frame_ver_emprestimos, text='Remover Empréstimo', command=remove_emprestimo).grid(row=2, columnspan=3, pady=10)
+
+# Frame para histórico de empréstimos
+frame_historico = tk.Frame(notebook, bg='#e7e7e7')
+notebook.add(frame_historico, text='Histórico de Empréstimos')
+
+chatbox = tk.Text(frame_historico, height=15, width=80)
+chatbox.grid(row=0, column=0, padx=5, pady=5)
+
+ttk.Button(frame_historico, text='Atualizar Histórico', command=visualizar_historico).grid(row=1, pady=10)
+
+# Inicializa a aplicação
+root.mainloop()
